@@ -10,13 +10,16 @@ import pwd
 import subprocess
 import base64
 import os
+import time
 
 c = get_config()  #noqa
 
+# Preset following environment variables
+# JUPYTERHUB_SECRET_KEY, 
 os.environ["JUPYTERHUB_SECRET_KEY"] = "32-byte-long-key-1234567890ABCDE"
 
 class MyAuthenticator(Authenticator):
-    login_service = "My Service"
+    login_service = "JupyterHub Service"
 
     @default("auto_login")
     def _auto_login_default(self):
@@ -36,9 +39,7 @@ class MyAuthenticator(Authenticator):
                 return None
             
             secret_key_bytes = str.encode(secret_key)
-            print("--------------------JUPYTERHUB_SECRET_KEY = " + secret_key)
             decrypted_data = decrypt(secret_key_bytes, encr_token, True)
-            print("--------------------Decrypyted Data = " + decrypted_data.decode())
 
             # decoded_token = base64.b64decode(auth_state.encode()).decode()
         except Exception as e:
@@ -57,13 +58,22 @@ class MyAuthenticator(Authenticator):
             self.log.error("Invalid user data format (expected dictionary)")
             return None
 
+        expiration_time = int(user_data.get('expiry_time'))
+        time_now_seconds = int(time.time())
+
+        if expiration_time < time_now_seconds:
+            error_msg = "Token has expired " + str(expiration_time) + " < " + str(time_now_seconds)
+            self.log.error(error_msg)
+            return None
+        
        # Do some verification and get the data here.
        # Get the data from the parameters send to your hub from the login page, say username, access_token and email. Wrap everythin neatly in a dictionary and return it.
 
-        userdict = {"name": user_data.get('name').replace(".", "")}
+        userdict = {"name": user_data.get('username').replace(".", "")}
         userdict["auth_state"] = auth_state = {}
-        auth_state['dp_username'] = user_data.get('dp_username')
-        auth_state['wright_endpoint'] = user_data.get('wright_endpoint')
+        auth_state['username'] = user_data.get('username')
+        auth_state['sql_endpoint'] = user_data.get('sql_endpoint')
+        auth_state['access_token'] = user_data.get('access_token')
 
        #return the dictionary
         return userdict
@@ -74,8 +84,9 @@ class MyAuthenticator(Authenticator):
         if not auth_state:
             # Auth state not enabled or user has no state
             return
-        spawner.environment['DP_USER'] = auth_state['dp_username']
-        spawner.environment['WRIGHT_ENDPOINT'] = auth_state['wright_endpoint']
+        spawner.environment['USERNAME'] = auth_state['username']
+        spawner.environment['SQL_ENDPOINT'] = auth_state['sql_endpoint']
+        spawner.environment['ACCESS_TOKEN'] = auth_state['access_token']
 
 
 def decrypt(key, value, block_segments=False):
@@ -99,37 +110,112 @@ def decrypt(key, value, block_segments=False):
 crypt_key = os.urandom(32).hex()
 os.environ["JUPYTERHUB_CRYPT_KEY"] = crypt_key
 
-##Just-in-time user creation with pre_spawn_hook
+# Custom spawner class
+class CustomSpawner(LocalProcessSpawner):
+    async def start(self):
+        # Call the original start method
+        result = await super().start()
+
+        # Perform post-start operations
+        username = self.user.name
+        source_dir = "/srv/jupyterhub/setup"
+        ipython_dir = os.path.join("/home", username, ".ipython")
+        profile_dir = os.path.join(ipython_dir, "profile_default")
+        startup_dir = os.path.join(profile_dir, "startup")
+
+        if not os.path.exists(source_dir):
+            raise Exception(f"Source directory {source_dir} does not exist.")
+
+        # Ensure profile_default and startup directories exist and set permissions
+        if not os.path.exists(profile_dir):
+            os.makedirs(profile_dir, mode=0o755)
+
+        os.chmod(profile_dir, 0o755)
+        os.system(f"chown -R {username}:{username} {profile_dir}")
+
+        if not os.path.exists(startup_dir):
+            os.makedirs(startup_dir, mode=0o755)
+
+        os.chmod(startup_dir, 0o755)
+        os.system(f"chown -R {username}:{username} {startup_dir}")
+
+        # Copy files, handling existing directory
+        try:
+            shutil.copytree(source_dir, startup_dir, dirs_exist_ok=True)
+        except shutil.Error as e:
+            raise Exception(f"Error copying files: {e}") from e
+
+        # Verify the directory contents
+        print("Directory contents after copying:")
+        for root, dirs, files in os.walk(startup_dir):
+            for name in dirs:
+                print(f"DIR: {os.path.join(root, name)}")
+            for name in files:
+                print(f"FILE: {os.path.join(root, name)}")
+
+        # Final permission and ownership check
+        os.chmod(ipython_dir, 0o755)
+        os.chmod(profile_dir, 0o755)
+        os.chmod(startup_dir, 0o755)
+        os.system(f"chown -R {username}:{username} {ipython_dir}")
+
+        return result
+
+# JupyterHub configuration
+c.JupyterHub.spawner_class = CustomSpawner
+
+# Just-in-time user creation with pre_spawn_hook
 def pre_spawn_hook(spawner):
     username = spawner.user.name
+    
     try:
         pwd.getpwnam(username)
     except KeyError:
         subprocess.run(["adduser", "--disabled-password", "--gecos", "", username], check=True)
 
-    source_dir = "/srv/jupyterhub/setup"
-    dest_dir = os.path.join("/home",username, "notebooks")
-
-    # Check if source directory exists
-    if not os.path.exists(source_dir):
-        raise Exception(f"Source directory {source_dir} does not exist.")
-
-    # Create destination directory with proper permissions if it doesn't exist
-    if not os.path.exists(dest_dir):
-        os.makedirs(dest_dir, mode=0o700)  # Set appropriate permissions
-
-        # Copy files, handling existing directory
-        try:
-            shutil.copytree(source_dir, dest_dir, dirs_exist_ok=True)
-        except shutil.Error as e:
-            raise Exception(f"Error copying files: {e}") from e
-    
-    spawner.default_url = os.path.join("lab/tree/notebooks","main.ipynb") 
-    # if not os.path.exists(source_dir):
-    #     copytree(source_dir, dest_dir)
 
 c.Spawner.pre_spawn_hook = pre_spawn_hook
 
+##Just-in-time user creation with pre_spawn_hook
+# def pre_spawn_hook(spawner):
+#     username = spawner.user.name
+#     try:
+#         pwd.getpwnam(username)
+#     except KeyError:
+#         subprocess.run(["adduser", "--disabled-password", "--gecos", "", username], check=True)
+
+#     source_dir = "/srv/jupyterhub/setup"
+#     ipython_dir = os.path.join("/home", username, ".ipython")
+#     dest_dir = os.path.join("/home",username, ".ipython/profile_default/startup")
+
+#     if not os.path.exists(source_dir):
+#         raise Exception(f"Source directory {source_dir} does not exist.")
+
+
+#     # Ensure .ipython directory exists and is writable
+#     if not os.path.exists(ipython_dir):
+#         os.makedirs(ipython_dir, mode=0o755)
+
+#     os.chmod(ipython_dir, 0o755)
+    
+#     # Ensure profile_default/startup directory exists and set permissions
+#     if not os.path.exists(dest_dir):
+#         os.makedirs(dest_dir, mode=0o755)
+
+#     os.chmod(dest_dir, 0o755)
+
+#     if not os.path.exists(dest_dir):
+#         raise Exception(f"Destination directory {dest_dir} does not exist.")
+
+
+#     # Copy files, handling existing directory
+#     try:
+#         shutil.copytree(source_dir, dest_dir, dirs_exist_ok=True)
+#     except shutil.Error as e:
+#         raise Exception(f"Error copying files: {e}") from e
+
+
+# c.Spawner.pre_spawn_hook = pre_spawn_hook
 
 ## Enable persisting auth_state (if available).
 #  
@@ -166,6 +252,10 @@ c.JupyterHub.authenticator_class = MyAuthenticator
 #  Default: ''
 c.JupyterHub.logo_file = 'datapelago-logo.png'
 
+## Shuts down all user servers on logout
+#  Default: False
+c.JupyterHub.shutdown_on_logout = True
+
 #------------------------------------------------------------------------------
 # Application(SingletonConfigurable) configuration
 #------------------------------------------------------------------------------
@@ -184,7 +274,13 @@ c.Application.log_format = '[%(name)s]%(highlevel)s %(message)s'
 #  Default: 30
 c.Application.log_level = 30
 
-c.JupyterHub.admin_users = set(["sagar"])
+## The public facing URL of the whole JupyterHub application.
+#  
+#          This is the address on which the proxy will bind.
+#          Sets protocol, ip, base_url
+#  Default: 'http://:8000'
+# c.JupyterHub.bind_url = 'http://:8000'
+
 #------------------------------------------------------------------------------
 # JupyterHub(Application) configuration
 #------------------------------------------------------------------------------
@@ -219,13 +315,6 @@ c.JupyterHub.admin_users = set(["sagar"])
 #  Default: 30
 # c.JupyterHub.activity_resolution = 30
 
-## DEPRECATED since version 2.0.0.
-#  
-#          The default admin role has full permissions, use custom RBAC scopes instead to
-#          create restricted administrator roles.
-#          https://jupyterhub.readthedocs.io/en/stable/rbac/index.html
-#  Default: False
-# c.JupyterHub.admin_access = False
 
 ## DEPRECATED since version 0.7.2, use Authenticator.admin_users instead.
 #  Default: set()
@@ -262,13 +351,6 @@ c.JupyterHub.admin_users = set(["sagar"])
 ## Authentication for prometheus metrics
 #  Default: True
 # c.JupyterHub.authenticate_prometheus = True
-
-## The public facing URL of the whole JupyterHub application.
-#  
-#          This is the address on which the proxy will bind.
-#          Sets protocol, ip, base_url
-#  Default: 'http://:8000'
-# c.JupyterHub.bind_url = 'http://:8000'
 
 ## Whether to shutdown the proxy when the Hub shuts down.
 #  
@@ -696,11 +778,6 @@ c.JupyterHub.admin_users = set(["sagar"])
 #  managed services.
 #  Default: {}
 # c.JupyterHub.service_tokens = {}
-
-
-## Shuts down all user servers on logout
-#  Default: False
-# c.JupyterHub.shutdown_on_logout = False
 
 ## The class to use for spawning single-user servers.
 #  

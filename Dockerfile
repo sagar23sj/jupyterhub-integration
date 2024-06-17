@@ -9,7 +9,9 @@ RUN apt-get update && apt install -y build-essential \
                               
 WORKDIR /srv/jupyterhub
 
-COPY . .
+COPY jupyterhub .
+
+RUN chmod -R 777 /srv/jupyterhub/setup
 
 RUN python -m pip install -r requirements.txt
 

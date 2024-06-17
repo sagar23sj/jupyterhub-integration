@@ -9,12 +9,12 @@ MAX_RETRIES = 3
 CONNECTION = None
 
 
-def get_wright_endpoint():
+def get_sql_endpoint():
     """
-    Returns WRIGHT_ENDPOINT from environment configuration
+    Returns SQL_ENDPOINT from environment configuration
     If value not present, then returns localhost URL
     """
-    endpoint = os.getenv("WRIGHT_ENDPOINT", "http://localhost:8080")
+    endpoint = os.getenv("SQL_ENDPOINT", "http://localhost:8080")
     return endpoint
 
 
@@ -23,7 +23,7 @@ def get_user_name():
     Returns USER_NAME from environment configuration
     If value not present, then returns default value
     """
-    user_name = os.environ.get("DP_USER", "test.user")
+    user_name = os.environ.get("USERNAME", "test.user")
     return user_name
 
 
@@ -32,7 +32,7 @@ def get_password():
     Returns ACCESS_TOKEN from environment configuration
     If value not present, then returns default value
     """
-    password = os.environ.get("DP_PASSWORD", "")
+    password = os.environ.get("ACCESS_TOKEN", "")
     return password
 
 def get_distributed_execution():
@@ -61,7 +61,7 @@ def get_use_metastore_api():
 
 def connect():
     """
-    Read the wright endpoint from the environment variables
+    Read the sql endpoint from the environment variables
     Create the connection to Phoenix DB and return the connection
     :return:
     """
@@ -75,14 +75,17 @@ def connect():
                 'useNewMetastoreApi': get_use_metastore_api()
             }
 
-    # Connect to the Wright Endpoint
+    # Connect to the SQL Endpoint
     conn = None
-    endpoint = get_wright_endpoint()
+    endpoint = get_sql_endpoint()
     try:
         conn = phoenixdb.connect(endpoint, max_retries=MAX_RETRIES, autocommit=True, **args)
         print("connection established\n")
     except Exception as e:
         print("Failed to connect to endpoint after {} retries.\n Exception: {}".format(MAX_RETRIES, e))
+        print("user name : ", get_user_name())
+        print("user ednpoitn : ", get_sql_endpoint())
+        print("user password : ",  get_password())
 
     return conn
 
