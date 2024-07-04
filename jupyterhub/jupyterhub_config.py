@@ -1,5 +1,3 @@
-# Configuration file for jupyterhub.
-
 from jupyterhub.auth import Authenticator
 from jupyterhub.spawner import LocalProcessSpawner
 from Crypto.Cipher import AES
@@ -69,7 +67,7 @@ class MyAuthenticator(Authenticator):
        # Do some verification and get the data here.
        # Get the data from the parameters send to your hub from the login page, say username, access_token and email. Wrap everythin neatly in a dictionary and return it.
 
-        userdict = {"name": user_data.get('username').replace(".", "")}
+        userdict = {"name": user_data.get('jupyterhub_user_id').replace(".", "")}
         userdict["auth_state"] = auth_state = {}
         auth_state['username'] = user_data.get('username')
         auth_state['sql_endpoint'] = user_data.get('sql_endpoint')
@@ -77,6 +75,7 @@ class MyAuthenticator(Authenticator):
 
        #return the dictionary
         return userdict
+
     
     async def pre_spawn_start(self, user, spawner):
         """Pass auth state data to spawner via environment variables"""
@@ -84,6 +83,7 @@ class MyAuthenticator(Authenticator):
         if not auth_state:
             # Auth state not enabled or user has no state
             return
+        
         spawner.environment['USERNAME'] = auth_state['username']
         spawner.environment['SQL_ENDPOINT'] = auth_state['sql_endpoint']
         spawner.environment['ACCESS_TOKEN'] = auth_state['access_token']
@@ -115,10 +115,11 @@ class CustomSpawner(LocalProcessSpawner):
     async def start(self):
         # Call the original start method
         result = await super().start()
-
+        
         # Perform post-start operations
         username = self.user.name
         source_dir = "/srv/jupyterhub/setup"
+        userhome = os.path.join("/home", username)
         ipython_dir = os.path.join("/home", username, ".ipython")
         profile_dir = os.path.join(ipython_dir, "profile_default")
         startup_dir = os.path.join(profile_dir, "startup")
@@ -145,6 +146,31 @@ class CustomSpawner(LocalProcessSpawner):
         except shutil.Error as e:
             raise Exception(f"Error copying files: {e}") from e
 
+        # Path to the new notebook file
+        notebook_path = os.path.join(userhome, 'main.ipynb')
+
+        notebook_content = {
+            "cells": [],
+            "metadata": {
+                "kernelspec": {
+                    "name": "python3",
+                    "display_name": "Python 3"
+                },
+                "language_info": {
+                "name": "python",
+                "version": "3.10.12"  # Ensure this matches the Python version you want to use
+                }
+            },
+            "nbformat": 4,
+            "nbformat_minor": 2
+        }
+
+        # Create the notebook with read, write, execute permissions
+        with open(notebook_path, 'w') as notebook_file:
+            json.dump(notebook_content, notebook_file)
+            
+        os.chmod(notebook_path, 0o777)
+
         # Verify the directory contents
         print("Directory contents after copying:")
         for root, dirs, files in os.walk(startup_dir):
@@ -161,20 +187,39 @@ class CustomSpawner(LocalProcessSpawner):
 
         return result
 
-# JupyterHub configuration
-c.JupyterHub.spawner_class = CustomSpawner
-
 # Just-in-time user creation with pre_spawn_hook
 def pre_spawn_hook(spawner):
     username = spawner.user.name
-    
+    userhome = os.path.join("/home", username)
+
+    #deletes all files from userhome
+    if os.path.exists(userhome):
+        delete_non_hidden_files(userhome)
+
     try:
         pwd.getpwnam(username)
     except KeyError:
         subprocess.run(["adduser", "--disabled-password", "--gecos", "", username], check=True)
 
+# Function to delete non-hidden files in a directory
+def delete_non_hidden_files(directory):
+    for root, dirs, files in os.walk(directory):
+        for file in files:
+            # Check if the file is not hidden
+            if not file.startswith('.'):
+                file_path = os.path.join(root, file)
+                print(f"Deleting file: {file_path}")
+                os.remove(file_path)
 
+
+# JupyterHub configuration
+c.JupyterHub.spawner_class = CustomSpawner
 c.Spawner.pre_spawn_hook = pre_spawn_hook
+c.JupyterHubSpawner.user_options_form_url = ""
+
+
+# c.JupyterHub.singleuser_app = 'notebook.notebookapp.NotebookApp'
+c.Spawner.default_url = '/notebooks/main.ipynb'
 
 ##Just-in-time user creation with pre_spawn_hook
 # def pre_spawn_hook(spawner):
@@ -1021,3 +1066,5 @@ c.Application.log_level = 30
 #          This is the default to avoid data loss due to config changes.
 #  Default: False
 # c.Authenticator.delete_invalid_users = False
+
+
