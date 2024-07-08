@@ -217,6 +217,7 @@ c.JupyterHub.spawner_class = CustomSpawner
 c.Spawner.pre_spawn_hook = pre_spawn_hook
 c.JupyterHubSpawner.user_options_form_url = ""
 c.Authenticator.refresh_pre_spawn = True
+c.Authenticator.allow_all = True
 
 # c.JupyterHub.singleuser_app = 'notebook.notebookapp.NotebookApp'
 c.Spawner.default_url = '/notebooks/main.ipynb'
