@@ -14,12 +14,20 @@ import hashlib
 
 c = get_config()  #noqa
 
-# Preset following environment variables
-# JUPYTERHUB_SECRET_KEY, 
-os.environ["JUPYTERHUB_SECRET_KEY"] = "32-byte-long-key-1234567890ABCDE"
+# config file path
+config_file = "config.env"
 
-# JUPYTERHUB_HASH_KEY
-os.environ["JUPYTERHUB_HASH_KEY"] = "jupyterhub_hash_key"
+# read variables from file into a dictionary
+def read_file(filename):
+    vars = {}
+    with open(filename, "r") as file:
+        for line in file:
+            line = line.strip()
+            if line.startswith('#') or not line:
+                continue
+            key, value = line.split('=', 1)
+            vars[key] = value
+    return vars
 
 class MyAuthenticator(Authenticator):
     login_service = "JupyterHub Service"
@@ -37,13 +45,17 @@ class MyAuthenticator(Authenticator):
 
         # Base64 decode the token
         try:
-            secret_key = os.environ["JUPYTERHUB_SECRET_KEY"]
+            # Read variables from the config file into a dictionary
+            vars_dict = read_file(config_file)
+
+            # access variables from the dictionary
+            secret_key = vars_dict["JUPYTERHUB_SECRET_KEY"]
             if not secret_key:
                 return None
             
             secret_key_bytes = str.encode(secret_key)
 
-            hash_key = os.environ["JUPYTERHUB_HASH_KEY"]
+            hash_key = vars_dict["JUPYTERHUB_HASH_KEY"]
             if not hash_key:
                 return None
             
@@ -99,7 +111,7 @@ class MyAuthenticator(Authenticator):
         spawner.environment['ACCESS_TOKEN'] = auth_state['access_token']
 
 
-def decrypt(key,hash_Key, value, block_segments=False):
+def decrypt(secret_key,hash_Key, value, block_segments=False):
     # The base64 library fails if value is Unicode. Luckily, base64 is ASCII-safe.
     value = value.encode('utf-8')  # Convert to bytes
     # We add back the padding ("=") here so that the decode won't fail.
@@ -123,10 +135,10 @@ def decrypt(key,hash_Key, value, block_segments=False):
         # a length divisible by 16, we need to pad and truncate the values.
         remainder = len(value) % 16
         padded_value = value + b'\0' * (16 - remainder) if remainder else value
-        cipher = AES.new(key, AES.MODE_CFB, iv, segment_size=128)
+        cipher = AES.new(secret_key, AES.MODE_CFB, iv, segment_size=128)
         # Return the decrypted string with the padding removed.
         return cipher.decrypt(padded_value)[:len(value)]
-    return AES.new(key, AES.MODE_CFB, iv).decrypt(value)
+    return AES.new(secret_key, AES.MODE_CFB, iv).decrypt(value)
 
 # Generate a random 32-byte hex key for encryption
 crypt_key = os.urandom(32).hex()
