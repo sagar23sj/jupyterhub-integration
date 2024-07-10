@@ -9,12 +9,17 @@ import subprocess
 import base64
 import os
 import time
+import hmac
+import hashlib
 
 c = get_config()  #noqa
 
 # Preset following environment variables
 # JUPYTERHUB_SECRET_KEY, 
 os.environ["JUPYTERHUB_SECRET_KEY"] = "32-byte-long-key-1234567890ABCDE"
+
+# JUPYTERHUB_HASH_KEY
+os.environ["JUPYTERHUB_HASH_KEY"] = "jupyterhub_hash_key"
 
 class MyAuthenticator(Authenticator):
     login_service = "JupyterHub Service"
@@ -37,7 +42,12 @@ class MyAuthenticator(Authenticator):
                 return None
             
             secret_key_bytes = str.encode(secret_key)
-            decrypted_data = decrypt(secret_key_bytes, encr_token, True)
+
+            hash_key = os.environ["JUPYTERHUB_HASH_KEY"]
+            if not hash_key:
+                return None
+            
+            decrypted_data = decrypt(secret_key_bytes, hash_key, encr_token, True)
 
             # decoded_token = base64.b64decode(auth_state.encode()).decode()
         except Exception as e:
@@ -89,11 +99,23 @@ class MyAuthenticator(Authenticator):
         spawner.environment['ACCESS_TOKEN'] = auth_state['access_token']
 
 
-def decrypt(key, value, block_segments=False):
+def decrypt(key,hash_Key, value, block_segments=False):
     # The base64 library fails if value is Unicode. Luckily, base64 is ASCII-safe.
     value = value.encode('utf-8')  # Convert to bytes
     # We add back the padding ("=") here so that the decode won't fail.
     value = base64.b64decode(value + b'=' * (4 - len(value) % 4), b'-_')
+
+     # Extract the ciphertext and the original HMAC
+    ciphertext = value[:-32]  # Everything except the last 32 bytes
+    original_hmac = value[-32:]  # The last 32 bytes
+
+    # Generate a new HMAC for the ciphertext
+    new_hmac = hmac.new(hash_Key.encode(), ciphertext, hashlib.sha256).digest()
+
+    # Compare the original HMAC with the new HMAC
+    if not hmac.compare_digest(original_hmac, new_hmac):
+        raise Exception("Data integrity check failed.")
+
     iv, value = value[:AES.block_size], value[AES.block_size:]
     if block_segments:
         # Python uses 8-bit segments by default for legacy reasons. In order to support
