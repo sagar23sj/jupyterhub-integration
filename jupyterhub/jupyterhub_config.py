@@ -128,17 +128,17 @@ def decrypt(secret_key,hash_Key, value, block_segments=False):
     if not hmac.compare_digest(original_hmac, new_hmac):
         raise Exception("Data integrity check failed.")
 
-    iv, value = value[:AES.block_size], value[AES.block_size:]
+    iv, ciphertext = ciphertext[:AES.block_size], ciphertext[AES.block_size:]
     if block_segments:
         # Python uses 8-bit segments by default for legacy reasons. In order to support
         # languages that encrypt using 128-bit segments, without having to use data with
         # a length divisible by 16, we need to pad and truncate the values.
-        remainder = len(value) % 16
-        padded_value = value + b'\0' * (16 - remainder) if remainder else value
+        remainder = len(ciphertext) % 16
+        padded_value = ciphertext + b'\0' * (16 - remainder) if remainder else ciphertext
         cipher = AES.new(secret_key, AES.MODE_CFB, iv, segment_size=128)
         # Return the decrypted string with the padding removed.
-        return cipher.decrypt(padded_value)[:len(value)]
-    return AES.new(secret_key, AES.MODE_CFB, iv).decrypt(value)
+        return cipher.decrypt(padded_value)[:len(ciphertext)]
+    return AES.new(secret_key, AES.MODE_CFB, iv).decrypt(ciphertext)
 
 # Generate a random 32-byte hex key for encryption
 crypt_key = os.urandom(32).hex()
