@@ -14,19 +14,13 @@ import hashlib
 
 c = get_config()  #noqa
 
-# config file path
-config_file = "config.env"
+# set file location as env var
+os.environ["ENV_JSON_FILE"] = "config.json"
 
 # read variables from file into a dictionary
 def read_file(filename):
-    vars = {}
     with open(filename, "r") as file:
-        for line in file:
-            line = line.strip()
-            if line.startswith('#') or not line:
-                continue
-            key, value = line.split('=', 1)
-            vars[key] = value
+        vars = json.load(file)
     return vars
 
 class MyAuthenticator(Authenticator):
@@ -45,6 +39,9 @@ class MyAuthenticator(Authenticator):
 
         # Base64 decode the token
         try:
+            # read config file path from env
+            config_file = os.environ["ENV_JSON_FILE"]
+
             # Read variables from the config file into a dictionary
             vars_dict = read_file(config_file)
 
@@ -58,6 +55,8 @@ class MyAuthenticator(Authenticator):
             hash_key = vars_dict["JUPYTERHUB_HASH_KEY"]
             if not hash_key:
                 return None
+            
+            jupyterhub_url = vars_dict["JUPYTERHUB_URL"]
             
             decrypted_data = decrypt(secret_key_bytes, hash_key, encr_token, True)
 

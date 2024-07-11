@@ -1,0 +1,5 @@
+{
+    "JUPYTERHUB_SECRET_KEY": "32-byte-long-key-1234567890ABCDE",
+    "JUPYTERHUB_HASH_KEY": "jupyterhub_hash_key",
+    "JUPYTERHUB_URL": "http://localhost:8005"
+}
