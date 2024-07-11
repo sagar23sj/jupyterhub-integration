@@ -88,7 +88,7 @@ class MyAuthenticator(Authenticator):
        # Do some verification and get the data here.
        # Get the data from the parameters send to your hub from the login page, say username, access_token and email. Wrap everythin neatly in a dictionary and return it.
 
-        userdict = {"name": user_data.get('jupyterhub_user_id').replace(".", "")}
+        userdict = {"name": user_data.get('jupyterhub_user_id')}
         userdict["auth_state"] = auth_state = {}
         auth_state['username'] = user_data.get('username')
         auth_state['sql_endpoint'] = user_data.get('sql_endpoint')
