@@ -9,12 +9,19 @@ import subprocess
 import base64
 import os
 import time
+import hmac
+import hashlib
 
 c = get_config()  #noqa
 
-# Preset following environment variables
-# JUPYTERHUB_SECRET_KEY, 
-os.environ["JUPYTERHUB_SECRET_KEY"] = "32-byte-long-key-1234567890ABCDE"
+# set file location as env var
+os.environ["ENV_JSON_FILE"] = "config.json"
+
+# read variables from file into a dictionary
+def read_file(filename):
+    with open(filename, "r") as file:
+        vars = json.load(file)
+    return vars
 
 class MyAuthenticator(Authenticator):
     login_service = "JupyterHub Service"
@@ -32,12 +39,26 @@ class MyAuthenticator(Authenticator):
 
         # Base64 decode the token
         try:
-            secret_key = os.environ["JUPYTERHUB_SECRET_KEY"]
+            # read config file path from env
+            config_file = os.environ["ENV_JSON_FILE"]
+
+            # Read variables from the config file into a dictionary
+            vars_dict = read_file(config_file)
+
+            # access variables from the dictionary
+            secret_key = vars_dict["JUPYTERHUB_SECRET_KEY"]
             if not secret_key:
                 return None
             
             secret_key_bytes = str.encode(secret_key)
-            decrypted_data = decrypt(secret_key_bytes, encr_token, True)
+
+            hash_key = vars_dict["JUPYTERHUB_HASH_KEY"]
+            if not hash_key:
+                return None
+            
+            jupyterhub_url = vars_dict["JUPYTERHUB_URL"]
+            
+            decrypted_data = decrypt(secret_key_bytes, hash_key, encr_token, True)
 
             # decoded_token = base64.b64decode(auth_state.encode()).decode()
         except Exception as e:
@@ -67,7 +88,7 @@ class MyAuthenticator(Authenticator):
        # Do some verification and get the data here.
        # Get the data from the parameters send to your hub from the login page, say username, access_token and email. Wrap everythin neatly in a dictionary and return it.
 
-        userdict = {"name": user_data.get('jupyterhub_user_id').replace(".", "")}
+        userdict = {"name": user_data.get('jupyterhub_user_id')}
         userdict["auth_state"] = auth_state = {}
         auth_state['username'] = user_data.get('username')
         auth_state['sql_endpoint'] = user_data.get('sql_endpoint')
@@ -89,22 +110,34 @@ class MyAuthenticator(Authenticator):
         spawner.environment['ACCESS_TOKEN'] = auth_state['access_token']
 
 
-def decrypt(key, value, block_segments=False):
+def decrypt(secret_key,hash_Key, value, block_segments=False):
     # The base64 library fails if value is Unicode. Luckily, base64 is ASCII-safe.
     value = value.encode('utf-8')  # Convert to bytes
     # We add back the padding ("=") here so that the decode won't fail.
     value = base64.b64decode(value + b'=' * (4 - len(value) % 4), b'-_')
-    iv, value = value[:AES.block_size], value[AES.block_size:]
+
+     # Extract the ciphertext and the original HMAC
+    ciphertext = value[:-32]  # Everything except the last 32 bytes
+    original_hmac = value[-32:]  # The last 32 bytes
+
+    # Generate a new HMAC for the ciphertext
+    new_hmac = hmac.new(hash_Key.encode(), ciphertext, hashlib.sha256).digest()
+
+    # Compare the original HMAC with the new HMAC
+    if not hmac.compare_digest(original_hmac, new_hmac):
+        raise Exception("Data integrity check failed.")
+
+    iv, ciphertext = ciphertext[:AES.block_size], ciphertext[AES.block_size:]
     if block_segments:
         # Python uses 8-bit segments by default for legacy reasons. In order to support
         # languages that encrypt using 128-bit segments, without having to use data with
         # a length divisible by 16, we need to pad and truncate the values.
-        remainder = len(value) % 16
-        padded_value = value + b'\0' * (16 - remainder) if remainder else value
-        cipher = AES.new(key, AES.MODE_CFB, iv, segment_size=128)
+        remainder = len(ciphertext) % 16
+        padded_value = ciphertext + b'\0' * (16 - remainder) if remainder else ciphertext
+        cipher = AES.new(secret_key, AES.MODE_CFB, iv, segment_size=128)
         # Return the decrypted string with the padding removed.
-        return cipher.decrypt(padded_value)[:len(value)]
-    return AES.new(key, AES.MODE_CFB, iv).decrypt(value)
+        return cipher.decrypt(padded_value)[:len(ciphertext)]
+    return AES.new(secret_key, AES.MODE_CFB, iv).decrypt(ciphertext)
 
 # Generate a random 32-byte hex key for encryption
 crypt_key = os.urandom(32).hex()
